@@ -36,7 +36,7 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <BrowserRouter basename="/site-monitor">
+    <BrowserRouter basename="/project-scraper">
       <AppRoutes />
     </BrowserRouter>
   )
