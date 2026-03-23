@@ -24,51 +24,72 @@ interface Settings {
   notification_email: string | null
 }
 
-// Convert CSS selector to a regex pattern that matches in raw HTML
-function selectorToHtmlPattern(selector: string): RegExp | null {
-  // Handle #id selectors
+// Check if a simple CSS selector part is present in the HTML using string matching
+function matchesSimpleSelector(html: string, selector: string): boolean {
+  const lowerHtml = html.toLowerCase()
+
+  // #id → look for id="value" or id='value'
   const idMatch = selector.match(/^#([\w-]+)$/)
   if (idMatch) {
-    return new RegExp(`id=["']${idMatch[1]}["']`, 'i')
+    const id = idMatch[1].toLowerCase()
+    return lowerHtml.includes(`id="${id}"`) || lowerHtml.includes(`id='${id}'`)
   }
 
-  // Handle .class selectors
+  // .class → look for the class name in a class attribute
   const classMatch = selector.match(/^\.([\w-]+)$/)
   if (classMatch) {
-    return new RegExp(`class=["'][^"']*\\b${classMatch[1]}\\b[^"']*["']`, 'i')
+    return lowerHtml.includes(classMatch[1].toLowerCase())
   }
 
-  // Handle tag#id
+  // tag#id
   const tagIdMatch = selector.match(/^(\w+)#([\w-]+)$/)
   if (tagIdMatch) {
-    return new RegExp(`<${tagIdMatch[1]}[^>]*id=["']${tagIdMatch[2]}["']`, 'i')
+    const tag = tagIdMatch[1].toLowerCase()
+    const id = tagIdMatch[2].toLowerCase()
+    return lowerHtml.includes(`<${tag}`) && (lowerHtml.includes(`id="${id}"`) || lowerHtml.includes(`id='${id}'`))
   }
 
-  // Handle tag.class
+  // tag.class
   const tagClassMatch = selector.match(/^(\w+)\.([\w-]+)$/)
   if (tagClassMatch) {
-    return new RegExp(`<${tagClassMatch[1]}[^>]*class=["'][^"']*\\b${tagClassMatch[2]}\\b`, 'i')
+    return lowerHtml.includes(`<${tagClassMatch[1].toLowerCase()}`) && lowerHtml.includes(tagClassMatch[2].toLowerCase())
   }
 
-  // Handle [attribute=value]
+  // [attribute=value]
   const attrMatch = selector.match(/^\[([\w-]+)=["']?([^"'\]]+)["']?\]$/)
   if (attrMatch) {
-    return new RegExp(`${attrMatch[1]}=["']${attrMatch[2]}["']`, 'i')
+    const attr = attrMatch[1].toLowerCase()
+    const val = attrMatch[2].toLowerCase()
+    return lowerHtml.includes(`${attr}="${val}"`) || lowerHtml.includes(`${attr}='${val}'`)
   }
 
-  // Handle data-* attribute presence
+  // [attribute]
   const dataAttrMatch = selector.match(/^\[([\w-]+)\]$/)
   if (dataAttrMatch) {
-    return new RegExp(`${dataAttrMatch[1]}(?:=["'][^"']*["']|[\\s>])`, 'i')
+    return lowerHtml.includes(dataAttrMatch[1].toLowerCase())
   }
 
-  // Fallback: plain tag name
+  // plain tag name → look for <tagname
   const tagMatch = selector.match(/^(\w+)$/)
   if (tagMatch) {
-    return new RegExp(`<${tagMatch[1]}[\\s>]`, 'i')
+    return lowerHtml.includes(`<${tagMatch[1].toLowerCase()}`)
   }
 
-  return null
+  return false
+}
+
+// Check selector against HTML. Supports descendant selectors like "#id iframe".
+// For compound selectors, checks that ALL parts are present in the HTML.
+function selectorMatchesHtml(html: string, selector: string): { found: boolean; error: string | null } {
+  const parts = selector.trim().split(/\s+/)
+
+  for (const part of parts) {
+    if (!matchesSimpleSelector(html, part)) {
+      return { found: false, error: null }
+    }
+  }
+
+  return { found: true, error: null }
 }
 
 async function sendEmailNotification(
@@ -79,15 +100,15 @@ async function sendEmailNotification(
   selector: string,
   errorMessage: string
 ) {
-  const response = await fetch('https://api.emailit.com/v1/emails', {
+  const response = await fetch('https://api.emailit.com/v2/emails', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      from: 'Site Monitor <noreply@emailit.com>',
-      to: toEmail,
+      from: 'Site Monitor <noreply@designpixels.nl>',
+      to: [toEmail],
       subject: `⚠️ Element ontbreekt op ${siteName}`,
       html: `
         <h2>Site Monitor Alert</h2>
@@ -118,39 +139,88 @@ async function sendEmailNotification(
   return response.ok
 }
 
+async function fetchHtml(url: string): Promise<{ html: string; error: string | null }> {
+  // Try direct fetch first
+  const fetchUrl = new URL(url)
+  fetchUrl.searchParams.set('_cb', Date.now().toString())
+
+  const response = await fetch(fetchUrl.toString(), {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+    },
+    redirect: 'follow',
+  })
+
+  if (!response.ok) {
+    return { html: '', error: `HTTP ${response.status}: ${response.statusText}` }
+  }
+
+  return { html: await response.text(), error: null }
+}
+
 async function checkSite(site: Site): Promise<{ status: 'ok' | 'error'; responseTimeMs: number; errorMessage: string | null }> {
   const startTime = Date.now()
 
   try {
-    const response = await fetch(site.url, {
-      headers: {
-        'User-Agent': 'SiteMonitor/1.0',
-      },
-      redirect: 'follow',
-    })
+    // Try Design Pixels Health Check plugin endpoint first
+    const siteUrl = new URL(site.url)
+    const healthUrl = `${siteUrl.origin}/wp-json/designpixels/v1/health`
 
+    try {
+      const healthResponse = await fetch(healthUrl, {
+        headers: {
+          'Cache-Control': 'no-cache',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        },
+      })
+      if (healthResponse.ok) {
+        const data = await healthResponse.json()
+        const responseTimeMs = Date.now() - startTime
+        if (data && data.results) {
+          // Find the matching path in the health check results
+          // Try multiple path formats since WordPress may escape slashes
+          const pagePath = siteUrl.pathname.endsWith('/') ? siteUrl.pathname : siteUrl.pathname + '/'
+          const pathWithoutTrailing = pagePath.replace(/\/$/, '')
+
+          let result = null
+          for (const [key, value] of Object.entries(data.results)) {
+            const normalizedKey = (key as string).replace(/\\\//g, '/')
+            if (normalizedKey === pagePath || normalizedKey === pathWithoutTrailing || normalizedKey === siteUrl.pathname) {
+              result = value as { found: boolean; element_id?: string }
+              break
+            }
+          }
+
+          if (result && typeof result.found === 'boolean') {
+            return {
+              status: result.found ? 'ok' : 'error',
+              responseTimeMs,
+              errorMessage: result.found ? null : `Element "${result.element_id || site.selector}" niet gevonden (via health-check)`,
+            }
+          }
+        }
+      }
+    } catch {
+      // Health-check plugin not available, fall back to HTML fetch
+    }
+
+    // Fallback: fetch and parse HTML directly
+    const { html, error: fetchError } = await fetchHtml(site.url)
     const responseTimeMs = Date.now() - startTime
 
-    if (!response.ok) {
-      return {
-        status: 'error',
-        responseTimeMs,
-        errorMessage: `HTTP ${response.status}: ${response.statusText}`,
-      }
+    if (fetchError) {
+      return { status: 'error', responseTimeMs, errorMessage: fetchError }
     }
 
-    const html = await response.text()
-    const pattern = selectorToHtmlPattern(site.selector)
+    const { found, error: selectorError } = selectorMatchesHtml(html, site.selector)
 
-    if (!pattern) {
-      return {
-        status: 'error',
-        responseTimeMs,
-        errorMessage: `Ongeldig selector formaat: ${site.selector}`,
-      }
+    if (selectorError) {
+      return { status: 'error', responseTimeMs, errorMessage: selectorError }
     }
-
-    const found = pattern.test(html)
 
     return {
       status: found ? 'ok' : 'error',
@@ -191,15 +261,140 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    // Check if a specific site was requested
+    // Handle POST with WordPress plugin push data
     let siteFilter: string | null = null
+    let pluginData: { source?: string; site_url?: string; results?: Record<string, { element_id: string; found: boolean; response_time_ms?: number; error?: string }> } | null = null
+
     if (req.method === 'POST') {
       try {
         const body = await req.json()
-        siteFilter = body.site_id ?? null
+        if (body.source === 'wordpress-plugin' && body.results) {
+          pluginData = body
+        } else {
+          siteFilter = body.site_id ?? null
+        }
       } catch {
         // No body or invalid JSON - check all sites
       }
+    }
+
+    // If WordPress plugin pushed results, process them directly
+    if (pluginData && pluginData.results && pluginData.site_url) {
+      const siteOrigin = pluginData.site_url.replace(/\/$/, '')
+
+      // Find matching sites in the database
+      const { data: allSites } = await supabase.from('sites').select('*').eq('is_active', true)
+      const processedResults = []
+
+      for (const site of (allSites || [])) {
+        // Match by origin: site.url can be "https://tvrapid.nl" or "https://tvrapid.nl/some-page/"
+        let siteUrlObj: URL
+        try { siteUrlObj = new URL(site.url) } catch { continue }
+        if (siteUrlObj.origin !== siteOrigin) continue
+
+        // If site.url has a specific path, match that path in plugin results
+        // If site.url is just the origin (path is "/"), process ALL plugin results for this site
+        const sitePath = siteUrlObj.pathname
+        const isRootUrl = sitePath === '/' || sitePath === ''
+
+        if (isRootUrl) {
+          // Process all plugin results as separate check entries, combine into one status
+          let allFound = true
+          let firstError: string | null = null
+          let totalTimeMs = 0
+
+          for (const [path, result] of Object.entries(pluginData.results)) {
+            const r = result as { found: boolean; element_id: string; response_time_ms?: number; error?: string }
+            totalTimeMs += r.response_time_ms ?? 0
+            if (!r.found) {
+              allFound = false
+              firstError = `Element "${r.element_id}" niet gevonden op ${path}`
+            }
+          }
+
+          const status = allFound ? 'ok' : 'error'
+          const errorMessage = allFound ? null : firstError
+
+          // Save check result
+          await supabase.from('check_results').insert({
+            site_id: site.id,
+            status,
+            response_time_ms: totalTimeMs,
+            error_message: errorMessage,
+          })
+
+          await supabase.from('sites').update({
+            last_status: status,
+            last_checked_at: new Date().toISOString(),
+          }).eq('id', site.id)
+
+          if (status === 'error' && site.last_status !== 'error') {
+            const { data: settings } = await supabase
+              .from('settings').select('*').eq('user_id', site.user_id).single()
+            if (settings?.emailit_api_key && settings?.notification_email) {
+              await sendEmailNotification(
+                settings.emailit_api_key, settings.notification_email,
+                site.name, site.url, site.selector,
+                errorMessage ?? 'Element niet gevonden',
+              )
+            }
+          }
+
+          processedResults.push({ site_id: site.id, name: site.name, status })
+          continue
+        }
+
+        // Specific path matching
+        const normalizedPath = sitePath.endsWith('/') ? sitePath : sitePath + '/'
+        let pluginResult = null
+        for (const [path, result] of Object.entries(pluginData.results)) {
+          const normalizedKey = path.endsWith('/') ? path : path + '/'
+          if (normalizedKey === normalizedPath) {
+            pluginResult = result
+            break
+          }
+        }
+
+        if (!pluginResult) continue
+
+        const status = pluginResult.found ? 'ok' : 'error'
+        const errorMessage = pluginResult.found ? null : `Element "${pluginResult.element_id}" niet gevonden`
+
+        // Save check result
+        await supabase.from('check_results').insert({
+          site_id: site.id,
+          status,
+          response_time_ms: pluginResult.response_time_ms ?? null,
+          error_message: errorMessage,
+        })
+
+        // Update site status
+        await supabase.from('sites').update({
+          last_status: status,
+          last_checked_at: new Date().toISOString(),
+        }).eq('id', site.id)
+
+        // Send notification if status changed to error
+        if (status === 'error' && site.last_status !== 'error') {
+          const { data: settings } = await supabase
+            .from('settings').select('*').eq('user_id', site.user_id).single()
+
+          if (settings?.emailit_api_key && settings?.notification_email) {
+            await sendEmailNotification(
+              settings.emailit_api_key,
+              settings.notification_email,
+              site.name, site.url, site.selector,
+              errorMessage ?? 'Element niet gevonden',
+            )
+          }
+        }
+
+        processedResults.push({ site_id: site.id, name: site.name, status, pluginResult })
+      }
+
+      return new Response(JSON.stringify({ source: 'wordpress-plugin', processed: processedResults.length, results: processedResults }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
     }
 
     // Fetch active sites

@@ -9,7 +9,6 @@ interface Props {
 export function AddSiteModal({ onAdd, onClose }: Props) {
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
-  const [selector, setSelector] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -18,7 +17,7 @@ export function AddSiteModal({ onAdd, onClose }: Props) {
     setLoading(true)
     setError(null)
 
-    const { error } = await onAdd({ name, url, selector })
+    const { error } = await onAdd({ name, url, selector: '-' })
     if (error) {
       setError(String(error))
       setLoading(false)
@@ -48,14 +47,14 @@ export function AddSiteModal({ onAdd, onClose }: Props) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
-              placeholder="Bijv. Mijn Website"
+              placeholder="Bijv. TV Rapid"
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
 
           <div>
             <label htmlFor="url" className="block text-sm font-medium text-gray-700 mb-1">
-              URL
+              Site URL
             </label>
             <input
               id="url"
@@ -63,26 +62,11 @@ export function AddSiteModal({ onAdd, onClose }: Props) {
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               required
-              placeholder="https://voorbeeld.nl/contact"
+              placeholder="https://voorbeeld.nl"
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
-          </div>
-
-          <div>
-            <label htmlFor="selector" className="block text-sm font-medium text-gray-700 mb-1">
-              CSS Selector
-            </label>
-            <input
-              id="selector"
-              type="text"
-              value={selector}
-              onChange={(e) => setSelector(e.target.value)}
-              required
-              placeholder="Bijv. #contact-form of .my-form"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
-            />
             <p className="mt-1 text-xs text-gray-500">
-              Het CSS selector van het element dat aanwezig moet zijn op de pagina.
+              De checks worden geconfigureerd in de WordPress plugin op de site zelf.
             </p>
           </div>
 

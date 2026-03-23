@@ -86,8 +86,7 @@ export function SiteCard({ site, onDelete, onToggle, onRefresh }: Props) {
           </div>
         </div>
 
-        <div className="text-sm text-gray-500 mb-3 space-y-1">
-          <p>Selector: <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{site.selector}</code></p>
+        <div className="text-sm text-gray-500 mb-3">
           <p>{timeAgo(site.last_checked_at)}</p>
         </div>
 
