@@ -8,7 +8,7 @@ import { AddSiteModal } from '../components/AddSiteModal'
 
 export function DashboardPage() {
   const { signOut } = useAuth()
-  const { sites, loading, fetchSites, addSite, deleteSite, toggleSite } = useSites()
+  const { sites, loading, fetchSites, addSite, updateSite, deleteSite, toggleSite } = useSites()
   const [showAddModal, setShowAddModal] = useState(false)
 
   const okCount = sites.filter(s => s.last_status === 'ok').length
@@ -90,6 +90,7 @@ export function DashboardPage() {
               site={site}
               onDelete={deleteSite}
               onToggle={toggleSite}
+              onUpdate={updateSite}
               onRefresh={fetchSites}
             />
           ))}

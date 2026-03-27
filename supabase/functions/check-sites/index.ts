@@ -17,6 +17,7 @@ interface Site {
   selector: string
   is_active: boolean
   last_status: string
+  consecutive_errors: number
 }
 
 interface Settings {
@@ -98,8 +99,25 @@ async function sendEmailNotification(
   siteName: string,
   siteUrl: string,
   selector: string,
-  errorMessage: string
+  errorMessage: string,
+  isConfirmed: boolean
 ) {
+  const subject = isConfirmed
+    ? `🚨 Element is verdwenen op ${siteName}`
+    : `⚠️ Element mogelijk ontbrekend op ${siteName}`
+
+  const heading = isConfirmed
+    ? 'Site Monitor - Element verdwenen'
+    : 'Site Monitor - Waarschuwing'
+
+  const description = isConfirmed
+    ? `Het gemonitorde element is <strong>voor de tweede keer achter elkaar niet gevonden</strong>. Het element is waarschijnlijk echt verdwenen.`
+    : `Het gemonitorde element is <strong>niet gevonden</strong>. Dit kan tijdelijk zijn — als het bij de volgende check opnieuw ontbreekt, ontvang je een bevestigingsmail.`
+
+  const footer = isConfirmed
+    ? `<p style="color: #d32f2f; font-weight: bold;">Controleer of de Bricks Builder code opnieuw gesigned moet worden.</p>`
+    : `<p style="color: #f57c00;">Mogelijk een tijdelijk probleem. Er wordt bij de volgende check opnieuw gecontroleerd.</p>`
+
   const response = await fetch('https://api.emailit.com/v2/emails', {
     method: 'POST',
     headers: {
@@ -109,10 +127,10 @@ async function sendEmailNotification(
     body: JSON.stringify({
       from: 'Site Monitor <noreply@designpixels.nl>',
       to: [toEmail],
-      subject: `⚠️ Element ontbreekt op ${siteName}`,
+      subject,
       html: `
-        <h2>Site Monitor Alert</h2>
-        <p>Het gemonitorde element is <strong>niet gevonden</strong> op de volgende site:</p>
+        <h2>${heading}</h2>
+        <p>${description}</p>
         <table style="border-collapse: collapse; margin: 16px 0;">
           <tr>
             <td style="padding: 8px; font-weight: bold;">Site:</td>
@@ -131,7 +149,7 @@ async function sendEmailNotification(
             <td style="padding: 8px;">${errorMessage}</td>
           </tr>
         </table>
-        <p>Controleer of de Bricks Builder code opnieuw gesigned moet worden.</p>
+        ${footer}
       `,
     }),
   })
@@ -427,18 +445,28 @@ Deno.serve(async (req) => {
         error_message: result.errorMessage,
       })
 
-      // Update site status
+      // Track consecutive errors
+      const consecutiveErrors = result.status === 'error'
+        ? (site.consecutive_errors || 0) + 1
+        : 0
+
+      // Update site status and error counter
       await supabase
         .from('sites')
         .update({
           last_status: result.status,
           last_checked_at: new Date().toISOString(),
+          consecutive_errors: consecutiveErrors,
         })
         .eq('id', site.id)
 
-      // Send notification if error and status changed from ok to error
-      if (result.status === 'error' && site.last_status !== 'error') {
-        // Get user settings for notification
+      // Send notification on error:
+      // - 1st consecutive error: warning mail (might be temporary)
+      // - 2nd consecutive error: confirmed mail (element is really gone)
+      // - 3rd+: no more mails
+      if (result.status === 'error' && consecutiveErrors <= 2) {
+        const isConfirmed = consecutiveErrors === 2
+
         const { data: settings } = await supabase
           .from('settings')
           .select('*')
@@ -453,6 +481,7 @@ Deno.serve(async (req) => {
             site.url,
             site.selector,
             result.errorMessage ?? 'Element niet gevonden',
+            isConfirmed,
           )
         }
       }

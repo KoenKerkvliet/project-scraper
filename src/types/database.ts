@@ -7,6 +7,8 @@ export interface Site {
   is_active: boolean
   last_status: 'ok' | 'error' | 'pending'
   last_checked_at: string | null
+  consecutive_errors: number
+  dashboard_url: string | null
   created_at: string
 }
 
@@ -19,7 +21,15 @@ export interface SiteInsert {
   is_active?: boolean
   last_status?: 'ok' | 'error' | 'pending'
   last_checked_at?: string | null
+  consecutive_errors?: number
+  dashboard_url?: string | null
   created_at?: string
+}
+
+export interface HealthElement {
+  path: string
+  found: boolean
+  element_id: string | null
 }
 
 export interface CheckResult {

@@ -13,6 +13,8 @@ create table public.sites (
   is_active boolean not null default true,
   last_status text not null default 'pending' check (last_status in ('ok', 'error', 'pending')),
   last_checked_at timestamptz,
+  consecutive_errors integer not null default 0,
+  dashboard_url text,
   created_at timestamptz not null default now()
 );
 
